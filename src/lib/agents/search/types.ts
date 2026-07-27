@@ -21,6 +21,12 @@ export type SearchAgentInput = {
   config: SearchAgentConfig;
   chatId: string;
   messageId: string;
+  /**
+   * Stream the answer but write nothing to the database - no `chats` row and
+   * no `messages` row. Set by /api/chat for clients that keep their own
+   * history and must not leave one on the server.
+   */
+  ephemeral?: boolean;
 };
 
 export type WidgetInput = {

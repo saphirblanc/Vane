@@ -55,8 +55,9 @@ type ChatContext = {
     message: string,
     messageId?: string,
     rewrite?: boolean,
+    overrides?: RewriteOverrides,
   ) => Promise<void>;
-  rewrite: (messageId: string) => void;
+  rewrite: (messageId: string, overrides?: RewriteOverrides) => void;
   setChatModelProvider: (provider: ChatModelProvider) => void;
   setEmbeddingModelProvider: (provider: EmbeddingModelProvider) => void;
 };
@@ -67,10 +68,21 @@ export interface File {
   fileId: string;
 }
 
-interface ChatModelProvider {
+export interface ChatModelProvider {
   key: string;
   providerId: string;
 }
+
+/**
+ * One-shot settings for a single retry.
+ *
+ * Deliberately not persisted: picking Quality to re-run one answer must not
+ * silently change the mode for the rest of the conversation.
+ */
+export type RewriteOverrides = {
+  chatModel?: ChatModelProvider;
+  optimizationMode?: string;
+};
 
 interface EmbeddingModelProvider {
   key: string;
@@ -523,7 +535,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, [isMessagesLoaded, isConfigReady, newChatCreated]);
 
-  const rewrite = (messageId: string) => {
+  const rewrite = (messageId: string, overrides?: RewriteOverrides) => {
     const index = messages.findIndex((msg) => msg.messageId === messageId);
 
     if (index === -1) return;
@@ -533,7 +545,12 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     chatHistory.current = chatHistory.current.slice(0, index * 2);
 
     const messageToRewrite = messages[index];
-    sendMessage(messageToRewrite.query, messageToRewrite.messageId, true);
+    sendMessage(
+      messageToRewrite.query,
+      messageToRewrite.messageId,
+      true,
+      overrides,
+    );
   };
 
   useEffect(() => {
@@ -715,6 +732,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
     message,
     messageId,
     rewrite = false,
+    overrides,
   ) => {
     if (loading || !message) return;
     setLoading(true);
@@ -757,7 +775,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         chatId: chatId!,
         files: fileIds,
         sources: sources,
-        optimizationMode: optimizationMode,
+        optimizationMode: overrides?.optimizationMode ?? optimizationMode,
         history: rewrite
           ? chatHistory.current.slice(
               0,
@@ -765,8 +783,9 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
             )
           : chatHistory.current,
         chatModel: {
-          key: chatModelProvider.key,
-          providerId: chatModelProvider.providerId,
+          key: overrides?.chatModel?.key ?? chatModelProvider.key,
+          providerId:
+            overrides?.chatModel?.providerId ?? chatModelProvider.providerId,
         },
         embeddingModel: {
           key: embeddingModelProvider.key,

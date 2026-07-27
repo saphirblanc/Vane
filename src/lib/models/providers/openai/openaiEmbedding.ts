@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import BaseEmbedding from '../../base/embedding';
 import { Chunk } from '@/lib/types';
+import { privacyFetch } from './privacyFetch';
 
 type OpenAIConfig = {
   apiKey: string;
@@ -17,6 +18,7 @@ class OpenAIEmbedding extends BaseEmbedding<OpenAIConfig> {
     this.openAIClient = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
+      fetch: privacyFetch,
     });
   }
 

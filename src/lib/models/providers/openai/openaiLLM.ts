@@ -19,6 +19,25 @@ import {
 } from 'openai/resources/index.mjs';
 import { Message } from '@/lib/types';
 import { repairJson } from '@toolsycc/json-repair';
+import { DEFAULT_MAX_TOKENS } from '../../constants';
+import { privacyFetch } from './privacyFetch';
+
+/**
+ * Some providers emit an empty `arguments` string for a tool call that takes
+ * no arguments. `JSON.parse('')` throws, which loses the whole turn rather
+ * than the one field.
+ */
+const parseToolArguments = (raw: string | null | undefined) => {
+  const trimmed = (raw ?? '').trim();
+
+  if (!trimmed) return {};
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return JSON.parse(repairJson(trimmed, { extractJson: true }) as string);
+  }
+};
 
 type OpenAIConfig = {
   apiKey: string;
@@ -36,6 +55,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
     this.openAIClient = new OpenAI({
       apiKey: this.config.apiKey,
       baseURL: this.config.baseURL || 'https://api.openai.com/v1',
+      fetch: privacyFetch,
     });
   }
 
@@ -91,7 +111,9 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
         input.options?.temperature ?? this.config.options?.temperature ?? 1.0,
       top_p: input.options?.topP ?? this.config.options?.topP,
       max_completion_tokens:
-        input.options?.maxTokens ?? this.config.options?.maxTokens,
+        input.options?.maxTokens ??
+        this.config.options?.maxTokens ??
+        DEFAULT_MAX_TOKENS,
       stop: input.options?.stopSequences ?? this.config.options?.stopSequences,
       frequency_penalty:
         input.options?.frequencyPenalty ??
@@ -110,7 +132,7 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
                 return {
                   name: tc.function.name,
                   id: tc.id,
-                  arguments: JSON.parse(tc.function.arguments),
+                  arguments: parseToolArguments(tc.function.arguments),
                 };
               }
             })
@@ -148,7 +170,9 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
         input.options?.temperature ?? this.config.options?.temperature ?? 1.0,
       top_p: input.options?.topP ?? this.config.options?.topP,
       max_completion_tokens:
-        input.options?.maxTokens ?? this.config.options?.maxTokens,
+        input.options?.maxTokens ??
+        this.config.options?.maxTokens ??
+        DEFAULT_MAX_TOKENS,
       stop: input.options?.stopSequences ?? this.config.options?.stopSequences,
       frequency_penalty:
         input.options?.frequencyPenalty ??
@@ -195,31 +219,62 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
   }
 
   async generateObject<T>(input: GenerateObjectInput): Promise<T> {
-    const response = await this.openAIClient.chat.completions.parse({
+    const params = {
       messages: this.convertToOpenAIMessages(input.messages),
       model: this.config.model,
       temperature:
         input.options?.temperature ?? this.config.options?.temperature ?? 1.0,
       top_p: input.options?.topP ?? this.config.options?.topP,
       max_completion_tokens:
-        input.options?.maxTokens ?? this.config.options?.maxTokens,
+        input.options?.maxTokens ??
+        this.config.options?.maxTokens ??
+        DEFAULT_MAX_TOKENS,
       stop: input.options?.stopSequences ?? this.config.options?.stopSequences,
       frequency_penalty:
         input.options?.frequencyPenalty ??
         this.config.options?.frequencyPenalty,
       presence_penalty:
         input.options?.presencePenalty ?? this.config.options?.presencePenalty,
-      response_format: zodResponseFormat(input.schema, 'object'),
-    });
+    };
+
+    let response;
+
+    try {
+      response = await this.openAIClient.chat.completions.parse({
+        ...params,
+        response_format: zodResponseFormat(input.schema, 'object'),
+      });
+    } catch (err) {
+      /* Not every OpenAI-compatible endpoint accepts a `json_schema`
+       * response_format - several OpenRouter upstreams reject it outright.
+       * `json_object` is the widely supported fallback; the schema is still
+       * enforced below by `input.schema.parse`. */
+      console.log(
+        'Structured output rejected, retrying with json_object:',
+        err,
+      );
+
+      response = await this.openAIClient.chat.completions.create({
+        ...params,
+        response_format: { type: 'json_object' },
+      });
+    }
 
     if (response.choices && response.choices.length > 0) {
+      const message = response.choices[0].message as {
+        content?: string | null;
+        reasoning?: string | null;
+      };
+
+      /* Reasoning models routed through OpenRouter sometimes return the
+       * payload in `reasoning` and leave `content` null. */
+      const raw = message.content ?? message.reasoning;
+
+      if (!raw) throw new Error('Empty response from OpenAI');
+
       try {
         return input.schema.parse(
-          JSON.parse(
-            repairJson(response.choices[0].message.content!, {
-              extractJson: true,
-            }) as string,
-          ),
+          JSON.parse(repairJson(raw, { extractJson: true }) as string),
         ) as T;
       } catch (err) {
         throw new Error(`Error parsing response from OpenAI: ${err}`);
@@ -239,7 +294,9 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
         input.options?.temperature ?? this.config.options?.temperature ?? 1.0,
       top_p: input.options?.topP ?? this.config.options?.topP,
       max_completion_tokens:
-        input.options?.maxTokens ?? this.config.options?.maxTokens,
+        input.options?.maxTokens ??
+        this.config.options?.maxTokens ??
+        DEFAULT_MAX_TOKENS,
       stop: input.options?.stopSequences ?? this.config.options?.stopSequences,
       frequency_penalty:
         input.options?.frequencyPenalty ??

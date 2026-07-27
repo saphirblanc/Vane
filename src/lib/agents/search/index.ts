@@ -11,7 +11,16 @@ import { TextBlock } from '@/lib/types';
 import { getTokenCount } from '@/lib/utils/splitText';
 
 class SearchAgent {
-  async searchAsync(session: SessionManager, input: SearchAgentInput) {
+  /**
+   * Creates or resets the `messages` row this turn streams into.
+   *
+   * Skipped entirely for an ephemeral turn - see `SearchAgentInput.ephemeral`.
+   * The answer still streams to the client; it just leaves nothing behind.
+   */
+  private async beginMessage(
+    session: SessionManager,
+    input: SearchAgentInput,
+  ) {
     const exists = await db.query.messages.findFirst({
       where: and(
         eq(messages.chatId, input.chatId),
@@ -51,6 +60,12 @@ class SearchAgent {
         )
         .execute();
     }
+  }
+
+  async searchAsync(session: SessionManager, input: SearchAgentInput) {
+    if (!input.ephemeral) {
+      await this.beginMessage(session, input);
+    }
 
     const classification = await classify({
       chatHistory: input.chatHistory,
@@ -80,7 +95,26 @@ class SearchAgent {
 
     let searchPromise: Promise<ResearcherOutput> | null = null;
 
-    if (!classification.classification.skipSearch) {
+    /* The classifier decides `skipSearch` from whether it believes the query is
+     * answerable from general knowledge, and it is far too eager about it -
+     * measured on this deployment it skipped the search for "What is the Nord
+     * Stream pipeline?" and "latest news about EU AI Act enforcement". Stock
+     * then hands the writer "<Query to be answered without searching>", which
+     * yields either an un-sourced answer from training data - no citations, no
+     * sources, and no UI signal that nothing was searched - or the writer's
+     * canned "could not find any relevant information" refusal.
+     *
+     * Honour it only when a widget already answers the query, since that
+     * output does reach the writer as <widgets_result>.
+     *
+     * This is not "always search". The researcher's orchestrator still decides
+     * whether to call web_search, so a greeting costs one extra LLM turn
+     * rather than an actual search. */
+    const { classification: c } = classification;
+    const widgetAnswersQuery =
+      c.showWeatherWidget || c.showStockWidget || c.showCalculationWidget;
+
+    if (!(c.skipSearch && widgetAnswersQuery)) {
       const researcher = new Researcher();
       searchPromise = researcher.research(session, {
         chatHistory: input.chatHistory,
@@ -172,6 +206,8 @@ class SearchAgent {
     }
 
     session.emit('end', {});
+
+    if (input.ephemeral) return;
 
     await db
       .update(messages)

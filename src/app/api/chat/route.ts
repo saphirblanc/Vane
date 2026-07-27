@@ -100,8 +100,19 @@ const ensureChatExists = async (input: {
   }
 };
 
+/**
+ * Clients that send this header keep their own history and must not leave a
+ * copy on the server. The answer streams exactly as normal; only the `chats`
+ * and `messages` writes are skipped.
+ */
+const EPHEMERAL_CLIENTS = ['perpink-ios'];
+
+const isEphemeralClient = (req: Request) =>
+  EPHEMERAL_CLIENTS.includes(req.headers.get('X-Vane-Client') ?? '');
+
 export const POST = async (req: Request) => {
   try {
+    const ephemeral = isEphemeralClient(req);
     const reqBody = (await req.json()) as Body;
 
     const parseBody = safeValidateBody(reqBody);
@@ -223,14 +234,17 @@ export const POST = async (req: Request) => {
         fileIds: body.files,
         systemInstructions: body.systemInstructions || 'None',
       },
+      ephemeral,
     });
 
-    ensureChatExists({
-      id: body.message.chatId,
-      sources: body.sources as SearchSources[],
-      fileIds: body.files,
-      query: body.message.content,
-    });
+    if (!ephemeral) {
+      ensureChatExists({
+        id: body.message.chatId,
+        sources: body.sources as SearchSources[],
+        fileIds: body.files,
+        query: body.message.content,
+      });
+    }
 
     req.signal.addEventListener('abort', () => {
       disconnect();

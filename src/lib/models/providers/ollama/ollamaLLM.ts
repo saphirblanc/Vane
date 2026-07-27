@@ -10,6 +10,7 @@ import {
 import { Ollama, Tool as OllamaTool, Message as OllamaMessage } from 'ollama';
 import { parse } from 'partial-json';
 import crypto from 'crypto';
+import { DEFAULT_MAX_TOKENS } from '../../constants';
 import { Message } from '@/lib/types';
 import { repairJson } from '@toolsycc/json-repair';
 
@@ -93,7 +94,10 @@ class OllamaLLM extends BaseLLM<OllamaConfig> {
         top_p: input.options?.topP ?? this.config.options?.topP,
         temperature:
           input.options?.temperature ?? this.config.options?.temperature ?? 0.7,
-        num_predict: input.options?.maxTokens ?? this.config.options?.maxTokens,
+        num_predict:
+          input.options?.maxTokens ??
+          this.config.options?.maxTokens ??
+          DEFAULT_MAX_TOKENS,
         num_ctx: 32000,
         frequency_penalty:
           input.options?.frequencyPenalty ??
@@ -149,7 +153,10 @@ class OllamaLLM extends BaseLLM<OllamaConfig> {
         temperature:
           input.options?.temperature ?? this.config.options?.temperature ?? 0.7,
         num_ctx: 32000,
-        num_predict: input.options?.maxTokens ?? this.config.options?.maxTokens,
+        num_predict:
+          input.options?.maxTokens ??
+          this.config.options?.maxTokens ??
+          DEFAULT_MAX_TOKENS,
         frequency_penalty:
           input.options?.frequencyPenalty ??
           this.config.options?.frequencyPenalty,
@@ -195,7 +202,10 @@ class OllamaLLM extends BaseLLM<OllamaConfig> {
         top_p: input.options?.topP ?? this.config.options?.topP,
         temperature:
           input.options?.temperature ?? this.config.options?.temperature ?? 0.7,
-        num_predict: input.options?.maxTokens ?? this.config.options?.maxTokens,
+        num_predict:
+          input.options?.maxTokens ??
+          this.config.options?.maxTokens ??
+          DEFAULT_MAX_TOKENS,
         frequency_penalty:
           input.options?.frequencyPenalty ??
           this.config.options?.frequencyPenalty,
@@ -235,7 +245,10 @@ class OllamaLLM extends BaseLLM<OllamaConfig> {
         top_p: input.options?.topP ?? this.config.options?.topP,
         temperature:
           input.options?.temperature ?? this.config.options?.temperature ?? 0.7,
-        num_predict: input.options?.maxTokens ?? this.config.options?.maxTokens,
+        num_predict:
+          input.options?.maxTokens ??
+          this.config.options?.maxTokens ??
+          DEFAULT_MAX_TOKENS,
         frequency_penalty:
           input.options?.frequencyPenalty ??
           this.config.options?.frequencyPenalty,

@@ -1,8 +1,39 @@
 import path from 'node:path';
 import fs from 'fs';
-import { Config, ConfigModelProvider, UIConfigSections } from './types';
+import {
+  Config,
+  ConfigModelProvider,
+  StringUIConfigField,
+  UIConfigSections,
+} from './types';
 import { hashObj } from '../utils/hash';
 import { getModelProvidersUIConfigSection } from '../models/providers';
+import { ANSWER_LENGTH_DEFAULTS, OptimizationMode } from './answerLength';
+
+/**
+ * A per-mode answer length box for Settings -> Personalization.
+ *
+ * These are `scope: 'server'` so the value is POSTed to /api/config and lands
+ * in config.json, where the writer prompt reads it back per request. The
+ * default shown here and the fallback used by the prompt are the same constant
+ * on purpose: a box showing a number the model is not using is worse than no
+ * box at all.
+ */
+const answerLengthField = (
+  mode: OptimizationMode,
+  label: string,
+): StringUIConfigField => ({
+  name: `${label} mode answer length`,
+  key: `${mode}WordTarget`,
+  type: 'string',
+  required: false,
+  description:
+    `Target length in words for ${label} mode. A guide, not a limit - ` +
+    `a reply runs longer when answering accurately needs it.`,
+  placeholder: String(ANSWER_LENGTH_DEFAULTS[mode]),
+  default: String(ANSWER_LENGTH_DEFAULTS[mode]),
+  scope: 'server',
+});
 
 class ConfigManager {
   configPath: string = path.join(
@@ -99,6 +130,9 @@ class ConfigManager {
           'e.g., "Respond in a friendly and concise tone" or "Use British English and format answers as bullet points."',
         scope: 'client',
       },
+      answerLengthField('speed', 'Speed'),
+      answerLengthField('balanced', 'Balanced'),
+      answerLengthField('quality', 'Quality'),
     ],
     modelProviders: [],
     search: [
