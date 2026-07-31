@@ -1,6 +1,7 @@
 # Customizations in this fork
 
-Six changes against upstream `ItzCrazyKns/Vane`. They previously lived as
+Six behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
+change (7). They previously lived as
 idempotent string replacements against the minified production build in the
 `itzcrazykns1337/vane:latest` image; they are now source changes, built into a
 local `vane-custom` image.
@@ -18,6 +19,7 @@ nothing.
 | 4 | Provider robustness fixes | `lib/models/constants.ts`, `openaiLLM.ts`, `ollama/ollamaLLM.ts` |
 | 5 | Retry with a different model and mode | `components/MessageActions/Rewrite.tsx`, `lib/hooks/useChat.tsx` |
 | 6 | Ephemeral chats for clients that keep their own history | `app/api/chat/route.ts`, `lib/agents/search/index.ts`, `lib/agents/search/types.ts` |
+| 7 | Dockerfile layer order: cacheable rebuilds, smaller image | `Dockerfile` |
 
 ## 1. Per-mode answer length
 
@@ -156,6 +158,50 @@ history and should not leave a copy on the server.
 
 Add further client identifiers to `EPHEMERAL_CLIENTS` in
 `src/app/api/chat/route.ts`.
+
+## 7. Dockerfile layer order
+
+Upstream's runtime stage copies the app artifacts first and then runs
+`yarn add playwright` and the SearXNG install. Two consequences:
+
+- Every source change invalidated those layers, so a one-line fix cost a full
+  rebuild (~20 min).
+- `yarn add playwright` ran on top of the Next.js standalone output, so it
+  re-resolved the app's whole dependency tree from standalone's `package.json`
+  and installed **586 extra modules** — the entire dev tree (`eslint`,
+  `@babel`, `autoprefixer`). That step alone took 283s and carried ~6 GB.
+
+`playwright` is already a dependency in `package.json`, so the builder stage
+installs it and Next.js traces it into the standalone output. The `yarn add`
+was redundant. It is gone; SearXNG and the browser download are hoisted above
+the `COPY --from=builder` lines.
+
+The one subtlety: standalone traces only playwright's runtime entrypoint
+(`index.js`), **not** `cli.js`, so the installer is copied from the builder's
+full `node_modules`. Both come from the same `yarn.lock`, so the version — and
+the browser build number the app looks for at launch — always match. Installing
+the browser any other way (a separately resolved `yarn add`, or a pinned
+`npx playwright@x.y.z`) risks a browser whose build number `playwright-core`
+does not look for, which fails only at runtime with
+`Executable doesn't exist at .../chromium_headless_shell-<n>`.
+
+Measured on this host:
+
+| | before | after |
+| --- | --- | --- |
+| source-only rebuild | ~1200s | 206s (all of it `yarn build`) |
+| image size | 8.71 GB | 2.4 GB |
+
+After changing this file, verify Chromium actually **launches** — not just that
+`require('playwright')` resolves, which stays true even when the browser is
+missing:
+
+```sh
+docker run --rm --entrypoint sh <image> -c 'cd /home/vane && node -e "
+  require(\"playwright\").chromium.launch({args:[\"--no-sandbox\"]}).then(b=>{
+    console.log(\"OK\"); b.close();
+  }).catch(e=>console.log(\"FAILED:\", e.message.split(String.fromCharCode(10))[0]))"'
+```
 
 ## Merging upstream
 

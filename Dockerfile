@@ -26,16 +26,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /home/vane
 
-COPY --from=builder /home/vane/public ./public
-COPY --from=builder /home/vane/.next/static ./public/_next/static
-COPY --from=builder /home/vane/.next/standalone ./
-COPY --from=builder /home/vane/data ./data
-COPY drizzle ./drizzle
+# Everything below this point is independent of the application source. It is
+# ordered before the COPY --from=builder lines so that a source-only change
+# does not invalidate the SearXNG layers. Touching any line in this section
+# rebuilds all of it.
 
 RUN mkdir /home/vane/uploads
-
-RUN yarn add playwright
-RUN yarn playwright install --with-deps --only-shell chromium
 
 RUN useradd --shell /bin/bash --system \
     --home-dir "/usr/local/searxng" \
@@ -69,6 +65,28 @@ RUN chmod +x ./entrypoint.sh
 RUN sed -i 's/\r$//' ./entrypoint.sh || true
 
 RUN echo "searxng ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Playwright. `playwright` is already an app dependency, but the standalone
+# output traces only its runtime entrypoint (index.js) — not cli.js — so the
+# browser installer has to come from the builder's full node_modules. Both
+# resolve from the same yarn.lock, so the version, and therefore the browser
+# build number the app looks for at launch, always match.
+#
+# These COPY layers are keyed on the content of the playwright packages rather
+# than on the app source, so they and the download below stay cached across
+# ordinary source changes. Do not fold this into the section below.
+COPY --from=builder /home/vane/node_modules/playwright ./node_modules/playwright
+COPY --from=builder /home/vane/node_modules/playwright-core ./node_modules/playwright-core
+RUN node ./node_modules/playwright/cli.js install --with-deps --only-shell chromium
+
+# Application artifacts last: these are the only layers a source change should
+# invalidate. The standalone COPY lands its trimmed playwright over the full
+# copy above; COPY merges rather than replaces, so cli.js survives.
+COPY --from=builder /home/vane/public ./public
+COPY --from=builder /home/vane/.next/static ./public/_next/static
+COPY --from=builder /home/vane/.next/standalone ./
+COPY --from=builder /home/vane/data ./data
+COPY drizzle ./drizzle
 
 EXPOSE 3000 8080
 
