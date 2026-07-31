@@ -39,6 +39,23 @@ const parseToolArguments = (raw: string | null | undefined) => {
   }
 };
 
+/**
+ * Streaming counterpart of `parseToolArguments`. Mid-stream the accumulated
+ * arguments are legitimately incomplete (`{"query": "lates`), so this defers to
+ * `partial-json` rather than repairing. The guard matters because several
+ * providers prime a tool call with one or more empty `arguments` deltas before
+ * the first real one — DeepSeek V4 Flash and GLM do it on every call — and
+ * `partial-json` throws `Error(' is empty')` on a blank string. Unguarded that
+ * rejects inside the stream generator and the turn hangs with no `done`.
+ */
+const parsePartialToolArguments = (raw: string | null | undefined) => {
+  const trimmed = (raw ?? '').trim();
+
+  if (!trimmed) return {};
+
+  return parse(trimmed);
+};
+
 type OpenAIConfig = {
   apiKey: string;
   model: string;
@@ -198,14 +215,17 @@ class OpenAILLM extends BaseLLM<OpenAIConfig> {
                   id: tc.id!,
                   arguments: tc.function?.arguments || '',
                 };
-                recievedToolCalls.push(call);
-                return { ...call, arguments: parse(call.arguments || '{}') };
+                recievedToolCalls[tc.index] = call;
+                return {
+                  ...call,
+                  arguments: parsePartialToolArguments(call.arguments),
+                };
               } else {
                 const existingCall = recievedToolCalls[tc.index];
                 existingCall.arguments += tc.function?.arguments || '';
                 return {
                   ...existingCall,
-                  arguments: parse(existingCall.arguments),
+                  arguments: parsePartialToolArguments(existingCall.arguments),
                 };
               }
             }) || [],

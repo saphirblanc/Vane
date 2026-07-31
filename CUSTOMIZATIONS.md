@@ -126,6 +126,17 @@ providers added later through the Settings UI.
   `message.reasoning` and leave `message.content` null; that is now handled.
 - A tool call with an empty `arguments` string parses as `{}` instead of
   throwing and losing the whole turn.
+- The same guard now applies to the **streaming** path, which had its own
+  `partial-json` call and no fallback. Several providers prime a tool call with
+  one or more empty `arguments` deltas before the first real one — DeepSeek V4
+  Flash and GLM 5.2 do it on every call — and `partial-json` throws
+  `Error(' is empty')` on a blank string. Because that happened inside the
+  stream generator it surfaced as an `unhandledRejection`, the turn never
+  emitted `done`, and the UI hung indefinitely rather than showing an error.
+- Streamed tool calls are stored at `recievedToolCalls[tc.index]` instead of
+  being `push`ed. With `push`, a provider that announces a higher index first
+  wrote the call into the wrong slot and then appended a second call's
+  arguments onto the first, corrupting both.
 
 ## 5. Retry with a different model and mode
 
