@@ -89,14 +89,20 @@ class ActionRegistry {
   ): Promise<ActionOutput[]> {
     const results: ActionOutput[] = [];
 
+    /* Indexed rather than pushed: the caller pairs `results[i]` with the tool
+     * call it sent as `actions[i]` to build the tool messages, and `push` under
+     * `Promise.all` orders by completion instead. A turn of
+     * `[web_search, __reasoning_preamble]` - DeepSeek emits exactly that order -
+     * has the preamble resolve first, so the search's `tool_call_id` was
+     * answered with the preamble's output and vice versa. */
     await Promise.all(
-      actions.map(async (actionConfig) => {
+      actions.map(async (actionConfig, index) => {
         const output = await this.execute(
           actionConfig.name,
           actionConfig.arguments,
           additionalConfig,
         );
-        results.push(output);
+        results[index] = output;
       }),
     );
 

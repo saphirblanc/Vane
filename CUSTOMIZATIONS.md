@@ -163,6 +163,17 @@ providers added later through the Settings UI.
   being `push`ed. With `push`, a provider that announces a higher index first
   wrote the call into the wrong slot and then appended a second call's
   arguments onto the first, corrupting both.
+- `done` no longer discards the rest of the turn. The researcher used to break
+  as soon as the last tool call was `done`, before executing anything, so a
+  model that bundled `[__reasoning_preamble, web_search, done]` into one turn -
+  DeepSeek V4 Flash does - had **every** call in that turn thrown away and left
+  the writer with nothing to cite. The actionable calls now run first and
+  `done` is honoured after, wherever in the turn it appeared.
+- `ActionRegistry.executeAll` writes results at `results[index]` instead of
+  pushing them. The caller pairs `results[i]` with `actions[i]` to build the
+  tool messages, but `push` under `Promise.all` ordered by completion: a turn
+  of `[web_search, __reasoning_preamble]` - the order DeepSeek emits - answered
+  the search's `tool_call_id` with the preamble's output and vice versa.
 
 ## 5. Retry with a different model and mode
 

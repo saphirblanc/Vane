@@ -151,35 +151,51 @@ class Researcher {
         break;
       }
 
-      if (finalToolCalls[finalToolCalls.length - 1].name === 'done') {
-        break;
+      /* `done` is a signal, not an action, and it does not have to arrive on a
+       * turn of its own. Models regularly bundle it with real work - DeepSeek
+       * V4 Flash emits `[__reasoning_preamble, web_search, done]` in a single
+       * turn - and breaking on it before executing the rest silently threw the
+       * search away, leaving the writer with nothing to cite. Run everything
+       * else first, then honour it. */
+      const doneRequested = finalToolCalls.some((tc) => tc.name === 'done');
+      const actionableToolCalls = finalToolCalls.filter(
+        (tc) => tc.name !== 'done',
+      );
+
+      if (actionableToolCalls.length > 0) {
+        agentMessageHistory.push({
+          role: 'assistant',
+          content: '',
+          tool_calls: actionableToolCalls,
+        });
+
+        const actionResults = await ActionRegistry.executeAll(
+          actionableToolCalls,
+          {
+            llm: input.config.llm,
+            embedding: input.config.embedding,
+            session: session,
+            researchBlockId: researchBlockId,
+            fileIds: input.config.fileIds,
+            mode: input.config.mode,
+          },
+        );
+
+        actionOutput.push(...actionResults);
+
+        actionResults.forEach((action, i) => {
+          agentMessageHistory.push({
+            role: 'tool',
+            id: actionableToolCalls[i].id,
+            name: actionableToolCalls[i].name,
+            content: JSON.stringify(action),
+          });
+        });
       }
 
-      agentMessageHistory.push({
-        role: 'assistant',
-        content: '',
-        tool_calls: finalToolCalls,
-      });
-
-      const actionResults = await ActionRegistry.executeAll(finalToolCalls, {
-        llm: input.config.llm,
-        embedding: input.config.embedding,
-        session: session,
-        researchBlockId: researchBlockId,
-        fileIds: input.config.fileIds,
-        mode: input.config.mode,
-      });
-
-      actionOutput.push(...actionResults);
-
-      actionResults.forEach((action, i) => {
-        agentMessageHistory.push({
-          role: 'tool',
-          id: finalToolCalls[i].id,
-          name: finalToolCalls[i].name,
-          content: JSON.stringify(action),
-        });
-      });
+      if (doneRequested) {
+        break;
+      }
     }
 
     const searchResults = actionOutput
