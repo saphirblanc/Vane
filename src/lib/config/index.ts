@@ -147,6 +147,21 @@ class ConfigManager {
         scope: 'server',
         env: 'SEARXNG_API_URL',
       },
+      {
+        name: 'Classifier model',
+        key: 'classifierModel',
+        type: 'string',
+        required: false,
+        description:
+          'Model key used for the classification step that runs before every ' +
+          'search. It is a short structured call, so a small fast model suits ' +
+          'it and the choice does not affect answer quality. Must be one of ' +
+          'the models already added to the same provider as the chat model. ' +
+          'Blank reuses the chat model.',
+        placeholder: 'e.g. mistralai/mistral-small-2603',
+        default: '',
+        scope: 'server',
+      },
     ],
   };
 

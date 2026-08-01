@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import ModelRegistry from '@/lib/models/registry';
+import { loadClassifierModel } from '@/lib/models/classifierModel';
 import { ModelWithProvider } from '@/lib/models/types';
 import SearchAgent from '@/lib/agents/search';
 import SessionManager from '@/lib/session';
@@ -146,6 +147,12 @@ export const POST = async (req: Request) => {
       ),
     ]);
 
+    const classifierLlm = await loadClassifierModel(
+      registry,
+      body.chatModel.providerId,
+      llm,
+    );
+
     const history: ChatTurnMessage[] = body.history.map((msg) => {
       if (msg[0] === 'human') {
         return {
@@ -228,6 +235,7 @@ export const POST = async (req: Request) => {
       messageId: body.message.messageId,
       config: {
         llm,
+        classifierLlm,
         embedding: embedding,
         sources: body.sources as SearchSources[],
         mode: body.optimizationMode,

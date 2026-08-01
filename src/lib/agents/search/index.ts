@@ -71,7 +71,7 @@ class SearchAgent {
       chatHistory: input.chatHistory,
       enabledSources: input.config.sources,
       query: input.followUp,
-      llm: input.config.llm,
+      llm: input.config.classifierLlm ?? input.config.llm,
     });
 
     const widgetPromise = WidgetExecutor.executeAll({

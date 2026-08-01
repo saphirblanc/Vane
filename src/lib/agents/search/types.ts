@@ -10,6 +10,11 @@ export type SearchAgentConfig = {
   sources: SearchSources[];
   fileIds: string[];
   llm: BaseLLM<any>;
+  /**
+   * Model for the pre-search classification call only. Optional: callers that
+   * leave it unset get `llm`, which is what that step always used.
+   */
+  classifierLlm?: BaseLLM<any>;
   embedding: BaseEmbedding<any>;
   mode: 'speed' | 'balanced' | 'quality';
   systemInstructions: string;
