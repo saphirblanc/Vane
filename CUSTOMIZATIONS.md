@@ -20,6 +20,10 @@ nothing.
 | 5 | Retry with a different model and mode | `components/MessageActions/Rewrite.tsx`, `lib/hooks/useChat.tsx` |
 | 6 | Ephemeral chats for clients that keep their own history | `app/api/chat/route.ts`, `lib/agents/search/index.ts`, `lib/agents/search/types.ts` |
 | 7 | Dockerfile layer order: cacheable rebuilds, smaller image | `Dockerfile` |
+| 8 | Embedding vectors no longer stream to the client | `lib/agents/search/researcher/actions/search/baseSearch.ts` |
+| 9 | Search embeddings are fetched in one batch | `baseSearch.ts`, `lib/models/providers/openai/openaiEmbedding.ts` |
+| 10 | The answer stream is rate limited instead of per token | `lib/agents/search/index.ts` |
+| 11 | The classifier model is configurable | `lib/models/classifierModel.ts`, `lib/config/index.ts`, `app/api/chat/route.ts`, `lib/agents/search/index.ts`, `lib/agents/search/types.ts` |
 
 ## 1. Per-mode answer length
 
@@ -237,6 +241,106 @@ docker run --rm --entrypoint sh <image> -c 'cd /home/vane && node -e "
     console.log(\"OK\"); b.close();
   }).catch(e=>console.log(\"FAILED:\", e.message.split(String.fromCharCode(10))[0]))"'
 ```
+
+## 8. Embedding vectors no longer stream to the client
+
+In `speed` and `balanced` mode the search path embeds every result to score and
+deduplicate it, then pushes those chunks — vector and all — into the
+`search_results` substep. The substep is what the session streams to the client
+and what gets written to `messages.responseBlocks`.
+
+A `pplx-embed` vector is 1024 floats, roughly 13 KB of JSON. Measured on one
+real query, **2.6 MB of the 2.79 MB response was embeddings**: 93% of the
+payload, for data the UI never reads. It renders the title and the url.
+
+`withoutEmbeddings` now strips the vector from the copy handed to the session.
+The full chunks stay on the local `results` array, which is what the similarity
+and dedup passes below actually use, so scoring is unchanged.
+
+The `quality` branch already built its chunks with `embedding: []` and needed no
+change.
+
+## 9. Search embeddings are fetched in one batch
+
+`executeSearch` called `embedText([content])` once per search result — around 20
+separate HTTPS round trips per query, for data the API accepts as a single
+array. The sibling `embedChunks` in the same file already batched.
+
+Now the query and every result go in one request. Measured directly against
+OpenRouter: **0.47s for 21 texts, against 6.11s issuing them one at a time.**
+
+This makes the response order load-bearing, so `openaiEmbedding` sorts on the
+`index` field rather than trusting arrival order. It could not matter when each
+request carried one text; with a batch, a provider answering out of order would
+silently score every snippet against the wrong text — a corruption that would
+look like poor result quality, not like a bug.
+
+## 10. The answer stream is rate limited instead of per token
+
+The writer emitted one `replace /data` per token, and that patch carries the
+whole answer so far rather than the delta. The bytes are quadratic in answer
+length: **1.38 MB for a 2653-character reply**, plus one full markdown
+re-render at the client per token.
+
+The patch shape is not ours to change — `perpink-ios` applies these patches too,
+and rfc6902 has no string-append operation — so the fix is to send fewer of
+them. Tokens accumulate on the block (which is the live session object, so
+server state and the DB write stay current either way) and the emit is limited
+to one per 100 ms. At 10 updates a second the stream still reads as continuous.
+
+The flush after the loop is the part that matters for correctness: a client
+reconnecting through `/api/reconnect/[id]` replays the event log, so the tail
+that the last interval did not cover has to be emitted before `end`.
+
+## 11. The classifier model is configurable
+
+Classification runs before anything else and blocks the whole pipeline —
+measured at 7s, 19s and 4.4s on three consecutive queries with DeepSeek V4
+Flash, against a 64s total. It is one short structured call, so it does not need
+the model that writes the answer.
+
+`Settings -> Search -> Classifier model` takes a model key. Blank, which is the
+default, reuses the chat model exactly as before.
+
+| Field | Config key | Default |
+| --- | --- | --- |
+| Classifier model | `search.classifierModel` | `''` (reuse the chat model) |
+
+The key must be one of the models already added to the same provider as the chat
+model — `loadChatModel` validates against the configured list, not against
+everything the provider offers. Resolution is deliberately forgiving: a typo, a
+retired model, or a key from another provider all log and fall back to the chat
+model rather than fail the request. A slow classifier is a nuisance; a search
+that does not run is not.
+
+```
+Classifier model "nonexistent/not-a-real-model" could not be loaded, falling
+back to the chat model: Error: Error Loading OpenAI Chat Model. Invalid Model
+Selected
+```
+
+Measured on this host, time from request to the research block opening — which
+is the classification step and nothing else:
+
+| Classifier | Samples |
+| --- | --- |
+| `deepseek-v4-flash` (i.e. the chat model, the old behaviour) | 2.85, 3.35, 3.49, 3.50, 4.40, 4.55, 5.01, 6.87, 7.11, 7.32, 19.18 |
+| `mistral-small-2603` | 12.91 (first call), 0.68, 0.66, ≤2.82 |
+
+So roughly 3-4s per query once warm, but note the cold first call. The point of
+the setting is that the right model here is an empirical question per host and
+per provider — measure before assuming a smaller model is faster.
+
+Measured end to end on this host, one balanced-mode query, `speed`/`balanced`
+being the modes that never touch Playwright:
+
+| | before | after |
+| --- | --- | --- |
+| bytes on the wire | 2.27–2.79 MB | 0.21 MB |
+| embedding vectors sent to the client | 75 | 0 |
+| `search_results` substep | 2.46 MB | 0.08 MB |
+| answer stream (`/data`) | 1.38 MB | 0.13 MB |
+| search + embedding step | 3.65–7.11s | 2.03–3.47s |
 
 ## Merging upstream
 
