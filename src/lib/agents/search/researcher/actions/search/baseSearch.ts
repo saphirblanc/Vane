@@ -9,6 +9,21 @@ import z from 'zod';
 import Scraper from '@/lib/scraper';
 import { splitText } from '@/lib/utils/splitText';
 
+/**
+ * The copy of a chunk that goes to the client.
+ *
+ * A 1024-dim embedding serialises to ~13 KB and the UI never renders one - it
+ * shows the title and the url. Streaming them anyway put 2.6 MB of float
+ * arrays on the wire for a single 2.3 KB answer, 93% of the whole response,
+ * and every one of those bytes was also written into `messages.responseBlocks`.
+ * The vectors stay on `results` below, which is what the dedup pass reads.
+ */
+const withoutEmbeddings = (chunks: Chunk[]): Chunk[] =>
+  chunks.map((chunk) => ({
+    ...chunk,
+    metadata: { ...chunk.metadata, embedding: [] },
+  }));
+
 export const executeSearch = async (input: {
   queries: string[];
   mode: SearchAgentConfig['mode'];
@@ -48,28 +63,27 @@ export const executeSearch = async (input: {
       let resultChunks: Chunk[] = [];
 
       try {
-        const queryEmbedding = (await input.embedding.embedText([q]))[0];
+        /* One request for the query and every result together, rather than one
+         * per result. The embeddings API takes an array natively - the sibling
+         * `embedChunks` already relies on that - so the old shape opened a
+         * separate HTTP round trip for each of ~20 search results and paid the
+         * provider's latency ~20 times over for data it asked for at once. */
+        const contents = res.results.map((r) => r.content || r.title);
 
-        resultChunks = (
-          await Promise.all(
-            res.results.map(async (r) => {
-              const content = r.content || r.title;
-              const chunkEmbedding = (
-                await input.embedding.embedText([content])
-              )[0];
+        const [queryEmbedding, ...chunkEmbeddings] =
+          await input.embedding.embedText([q, ...contents]);
 
-              return {
-                content,
-                metadata: {
-                  title: r.title,
-                  url: r.url,
-                  similarity: computeSimilarity(queryEmbedding, chunkEmbedding),
-                  embedding: chunkEmbedding,
-                },
-              };
-            }),
-          )
-        ).filter((c) => c.metadata.similarity > 0.5);
+        resultChunks = res.results
+          .map((r, i) => ({
+            content: contents[i],
+            metadata: {
+              title: r.title,
+              url: r.url,
+              similarity: computeSimilarity(queryEmbedding, chunkEmbeddings[i]),
+              embedding: chunkEmbeddings[i],
+            },
+          }))
+          .filter((c) => c.metadata.similarity > 0.5);
       } catch (err) {
         resultChunks = res.results.map((r) => {
           const content = r.content || r.title;
@@ -94,7 +108,7 @@ export const executeSearch = async (input: {
         researchBlock.data.subSteps.push({
           id: searchResultsBlockId,
           type: 'search_results',
-          reading: resultChunks,
+          reading: withoutEmbeddings(resultChunks),
         });
 
         input.session.updateBlock(researchBlock.id, [
@@ -113,7 +127,7 @@ export const executeSearch = async (input: {
           subStepIndex
         ] as SearchResultsResearchBlock;
 
-        subStep.reading.push(...resultChunks);
+        subStep.reading.push(...withoutEmbeddings(resultChunks));
 
         input.session.updateBlock(researchBlock.id, [
           {
