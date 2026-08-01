@@ -85,6 +85,29 @@ signal that nothing was searched — or the writer's canned refusal.
 already covers the query, since that output does reach the writer as
 `<widgets_result>`.
 
+The flag is **cleared**, not merely ignored at the call site. `web_search`,
+`academic_search` and `social_search` each gate themselves a second time in
+their own `enabled()`:
+
+```ts
+config.classification.classification.skipSearch === false
+```
+
+The first version of this change only skipped the check in
+`lib/agents/search/index.ts`, so a query the classifier wanted to skip entered
+the research phase with **no search tool in the list at all** — the researcher
+wrote a reasoning preamble, called `done`, and the writer refused for lack of
+sources. That is strictly worse than the stock behaviour it replaced, which at
+least answered from training data. Measured on this deployment with
+`deepseek/deepseek-v4-flash-0731`, "pourquoi le 1er août est le jour de fête
+national en suisse ?" produced 0 sources on 4 of 4 runs; after clearing the
+flag, 10 / 24 / 18 sources on 3 of 3.
+
+It looked model-specific but is not. GLM 5.2 classifies the same query
+`skipSearch: true` (8 of 8 runs across both models) and gets the same crippled
+tool list; it merely copes by recalling a URL and calling `scrape_url`, which
+is not gated. Any model that does not improvise a URL returns the refusal.
+
 This is not "always search": the researcher's orchestrator still decides
 whether to call `web_search`, so a greeting costs one extra LLM turn rather
 than a search.
@@ -93,6 +116,7 @@ than a search.
 | --- | --- | --- |
 | "What is the Nord Stream pipeline?" | refusal, 0 sources | 175 words, 15 citations, 50 sources |
 | "latest news about EU AI Act enforcement" | 0 citations | 166 words, 13 citations, 72 sources |
+| "pourquoi le 1er août est la fête nationale suisse ?" | refusal, 0 sources (4/4) | 10-24 sources (3/3) |
 | "hi there" | no research | research entered, 0 searches, 12 s |
 | "What is 25% of 80?" | widget, no search | unchanged |
 

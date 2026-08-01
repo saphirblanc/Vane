@@ -109,12 +109,24 @@ class SearchAgent {
      *
      * This is not "always search". The researcher's orchestrator still decides
      * whether to call web_search, so a greeting costs one extra LLM turn
-     * rather than an actual search. */
+     * rather than an actual search.
+     *
+     * The flag is cleared rather than merely ignored here, because
+     * `web_search`, `academic_search` and `social_search` gate themselves on
+     * `classification.skipSearch === false` in their own `enabled()`. Only
+     * skipping the check at this level let the researcher start with no search
+     * tool at all: it emitted a reasoning preamble, called `done`, and the
+     * writer refused for lack of sources - strictly worse than the stock
+     * behaviour it replaced. */
     const { classification: c } = classification;
     const widgetAnswersQuery =
       c.showWeatherWidget || c.showStockWidget || c.showCalculationWidget;
 
-    if (!(c.skipSearch && widgetAnswersQuery)) {
+    if (c.skipSearch && !widgetAnswersQuery) {
+      c.skipSearch = false;
+    }
+
+    if (!c.skipSearch) {
       const researcher = new Researcher();
       searchPromise = researcher.research(session, {
         chatHistory: input.chatHistory,
