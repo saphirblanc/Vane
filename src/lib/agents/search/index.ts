@@ -187,6 +187,35 @@ class SearchAgent {
 
     let responseBlockId = '';
 
+    /* `replace /data` carries the whole answer so far rather than the delta,
+     * so emitting one per token puts O(n^2) bytes on the wire - a measured
+     * 1.38 MB for a 2653-character reply - and forces the client to re-render
+     * the full markdown that many times. The patch shape is fixed (perpink-ios
+     * applies these too, and rfc6902 has no string-append op), so the fix is
+     * to send fewer of them: tokens accumulate on the block, which is the live
+     * session object, and only the emit is rate limited.
+     *
+     * At 10 updates a second the stream still reads as continuous. `pending`
+     * carries whatever the last interval did not cover, so the final flush
+     * below is what guarantees a reconnecting client replaying the event log
+     * ends up with the complete answer. */
+    const FLUSH_INTERVAL_MS = 100;
+    let lastFlushAt = 0;
+    let pending = false;
+
+    const flush = (block: TextBlock) => {
+      pending = false;
+      lastFlushAt = Date.now();
+
+      session.updateBlock(block.id, [
+        {
+          op: 'replace',
+          path: '/data',
+          value: block.data,
+        },
+      ]);
+    };
+
     for await (const chunk of answerStream) {
       if (!responseBlockId) {
         const block: TextBlock = {
@@ -198,6 +227,7 @@ class SearchAgent {
         session.emitBlock(block);
 
         responseBlockId = block.id;
+        lastFlushAt = Date.now();
       } else {
         const block = session.getBlock(responseBlockId) as TextBlock | null;
 
@@ -206,14 +236,19 @@ class SearchAgent {
         }
 
         block.data += chunk.contentChunk;
+        pending = true;
 
-        session.updateBlock(block.id, [
-          {
-            op: 'replace',
-            path: '/data',
-            value: block.data,
-          },
-        ]);
+        if (Date.now() - lastFlushAt >= FLUSH_INTERVAL_MS) {
+          flush(block);
+        }
+      }
+    }
+
+    if (pending && responseBlockId) {
+      const block = session.getBlock(responseBlockId) as TextBlock | null;
+
+      if (block) {
+        flush(block);
       }
     }
 
