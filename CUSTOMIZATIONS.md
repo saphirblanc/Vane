@@ -1,6 +1,6 @@
 # Customizations in this fork
 
-Eleven behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
+Twelve behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
 change (7). They previously lived as
 idempotent string replacements against the minified production build in the
 `itzcrazykns1337/vane:latest` image; they are now source changes, built into a
@@ -25,6 +25,7 @@ nothing.
 | 10 | The answer stream is rate limited instead of per token | `lib/agents/search/index.ts` |
 | 11 | The classifier model is configurable | `lib/models/classifierModel.ts`, `lib/config/index.ts`, `app/api/chat/route.ts`, `lib/agents/search/index.ts`, `lib/agents/search/types.ts` |
 | 12 | Model and mode are selectable on follow-ups, not just new threads | `components/MessageInput.tsx`, `components/MessageInputActions/Optimization.tsx`, `components/MessageInputActions/ChatModelSelector.tsx`, `lib/hooks/useChat.tsx` |
+| 13 | Each chat remembers its own model and mode | `lib/db/schema.ts`, `drizzle/0003_chat_model_and_mode.sql`, `app/api/chat/route.ts`, `lib/hooks/useChat.tsx` |
 
 ## 1. Per-mode answer length
 
@@ -369,6 +370,42 @@ the viewport and sits at the left of a wide row:
 Without it a reloaded thread displayed whatever mode was picked but sent every
 follow-up as `speed`, because the state reset to its default while the picker
 read from the same state.
+
+## 13. Each chat remembers its own model and mode
+
+`localStorage` alone is browser-wide, so reopening a thread showed the current
+defaults rather than what that thread had been running — and silently sent the
+next follow-up with them. There are really two settings here, and they now live
+in different places:
+
+- **`localStorage`** — the browser-wide default a *new* thread starts on.
+- **The `chats` row** — what *this* thread is running, restored on open.
+
+Migration `0003_chat_model_and_mode.sql` adds three nullable columns to `chats`:
+`optimizationMode`, `chatModelProviderId`, `chatModelKey`. They are written by
+`ensureChatExists` on **every** message, not only at creation, so the row tracks
+what the chat is currently set to rather than what it was opened with.
+
+Three things the restore has to get right:
+
+- **It must not write `localStorage`.** Reading an old thread would otherwise
+  repoint the browser-wide default at whatever that thread happened to use.
+- **It must not assume an effect order.** `checkConfig` and `loadMessages` are
+  independent effects that race, and `checkConfig` applies the defaults the
+  restore has to override. The restore waits on the provider list instead.
+- **A stored model may no longer exist.** The config can drop a model after a
+  chat used it, so the restore validates against the live provider list and
+  falls back to the default rather than sending a dead model key.
+
+Nullable columns mean chats predating the migration — 170 of them on this
+deployment — simply skip the restore and behave as before. Ephemeral chats (6)
+write no row at all, so they store nothing.
+
+Verified end to end in a browser against a copy of the live database: picking
+Quality + `xiaomi/mimo-v2.5` and reloading with `localStorage` deliberately
+pointed at `openrouter/auto-beta`/`speed` restored the chat's own pair, left
+`localStorage` untouched, sent the restored pair on an untouched follow-up, and
+still started a brand new thread on `balanced`/`openrouter/auto-beta`.
 
 ## Merging upstream
 
