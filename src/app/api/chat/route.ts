@@ -74,8 +74,18 @@ const ensureChatExists = async (input: {
   sources: SearchSources[];
   query: string;
   fileIds: string[];
+  optimizationMode: string;
+  chatModel: ModelWithProvider;
 }) => {
   try {
+    /* Written on every message, not just the first, so the row tracks what the
+       chat is currently set to rather than what it was opened with. */
+    const settings = {
+      optimizationMode: input.optimizationMode,
+      chatModelProviderId: input.chatModel.providerId,
+      chatModelKey: input.chatModel.key,
+    };
+
     const exists = await db.query.chats
       .findFirst({
         where: eq(chats.id, input.id),
@@ -94,7 +104,10 @@ const ensureChatExists = async (input: {
             name: UploadManager.getFile(id)?.name || 'Uploaded File',
           };
         }),
+        ...settings,
       });
+    } else {
+      await db.update(chats).set(settings).where(eq(chats.id, input.id));
     }
   } catch (err) {
     console.error('Failed to check/save chat:', err);
@@ -251,6 +264,8 @@ export const POST = async (req: Request) => {
         sources: body.sources as SearchSources[],
         fileIds: body.files,
         query: body.message.content,
+        optimizationMode: body.optimizationMode,
+        chatModel: body.chatModel,
       });
     }
 

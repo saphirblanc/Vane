@@ -90,11 +90,22 @@ interface EmbeddingModelProvider {
   providerId: string;
 }
 
+/* What a chat row remembers about how it was last run. Every field is
+   nullable - chats created before these columns existed have none. */
+interface StoredChatSettings {
+  optimizationMode: string | null;
+  chatModelProviderId: string | null;
+  chatModelKey: string | null;
+}
+
+const OPTIMIZATION_MODES = ['speed', 'balanced', 'quality'];
+
 const checkConfig = async (
   setChatModelProvider: (provider: ChatModelProvider) => void,
   setEmbeddingModelProvider: (provider: EmbeddingModelProvider) => void,
   setIsConfigReady: (ready: boolean) => void,
   setHasError: (hasError: boolean) => void,
+  setProviders: (providers: MinimalProvider[]) => void,
 ) => {
   try {
     let chatModelKey = localStorage.getItem('chatModelKey');
@@ -118,6 +129,8 @@ const checkConfig = async (
 
     const data = await res.json();
     const providers: MinimalProvider[] = data.providers;
+
+    setProviders(providers);
 
     if (providers.length === 0) {
       throw new Error(
@@ -193,6 +206,7 @@ const loadMessages = async (
   setNotFound: (notFound: boolean) => void,
   setFiles: (files: File[]) => void,
   setFileIds: (fileIds: string[]) => void,
+  setStoredSettings: (settings: StoredChatSettings | null) => void,
 ) => {
   const res = await fetch(`/api/chats/${chatId}`, {
     method: 'GET',
@@ -248,6 +262,11 @@ const loadMessages = async (
 
   chatHistory.current = history;
   setSources(data.chat.sources);
+  setStoredSettings({
+    optimizationMode: data.chat.optimizationMode ?? null,
+    chatModelProviderId: data.chat.chatModelProviderId ?? null,
+    chatModelKey: data.chat.chatModelKey ?? null,
+  });
   setIsMessagesLoaded(true);
 };
 
@@ -336,6 +355,35 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [isConfigReady, setIsConfigReady] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isReady, setIsReady] = useState(false);
+
+  const [providers, setProviders] = useState<MinimalProvider[]>([]);
+  const [storedSettings, setStoredSettings] =
+    useState<StoredChatSettings | null>(null);
+
+  /* An opened chat restores its own model and mode, overriding the
+     browser-wide defaults checkConfig just applied. Both land in effects that
+     race, so this waits for the provider list rather than assuming an order,
+     and it deliberately does not write localStorage: reading an old thread
+     must not change what the next new thread starts on. */
+  useEffect(() => {
+    if (!storedSettings || !isConfigReady) return;
+
+    const { optimizationMode, chatModelProviderId, chatModelKey } =
+      storedSettings;
+    setStoredSettings(null);
+
+    if (optimizationMode && OPTIMIZATION_MODES.includes(optimizationMode)) {
+      setOptimizationModeState(optimizationMode);
+    }
+
+    /* A model can be removed from the config after a chat used it. */
+    const provider = providers.find((p) => p.id === chatModelProviderId);
+    const model = provider?.chatModels.find((m) => m.key === chatModelKey);
+
+    if (provider && model) {
+      setChatModelProvider({ providerId: provider.id, key: model.key });
+    }
+  }, [storedSettings, isConfigReady, providers]);
 
   const messagesRef = useRef<Message[]>([]);
 
@@ -492,6 +540,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       setEmbeddingModelProvider,
       setIsConfigReady,
       setHasError,
+      setProviders,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -506,6 +555,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
       setIsMessagesLoaded(false);
       setNotFound(false);
       setNewChatCreated(false);
+      setStoredSettings(null);
     }
   }, [params.chatId, chatId]);
 
@@ -525,6 +575,7 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
         setNotFound,
         setFiles,
         setFileIds,
+        setStoredSettings,
       );
     } else if (!chatId) {
       setNewChatCreated(true);

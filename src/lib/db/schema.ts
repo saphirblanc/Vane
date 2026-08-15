@@ -35,4 +35,10 @@ export const chats = sqliteTable('chats', {
   files: text('files', { mode: 'json' })
     .$type<DBFile[]>()
     .default(sql`'[]'`),
+  /* The model and mode this chat last ran with, so reopening it restores the
+     thread's own settings rather than the browser-wide defaults. Nullable:
+     chats predating this column, and ephemeral clients, have none. */
+  optimizationMode: text('optimizationMode'),
+  chatModelProviderId: text('chatModelProviderId'),
+  chatModelKey: text('chatModelKey'),
 });
