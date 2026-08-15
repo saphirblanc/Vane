@@ -71,7 +71,7 @@ const MessageInput = () => {
         <div className="flex flex-row items-center shrink-0">
           <AttachSmall />
           <Optimization direction="up" />
-          <ModelSelector direction="up" />
+          <ModelSelector direction="up" align="left" />
         </div>
       )}
       <TextareaAutosize
@@ -97,7 +97,7 @@ const MessageInput = () => {
           <div className="flex flex-row items-center">
             <AttachSmall />
             <Optimization direction="up" />
-            <ModelSelector direction="up" />
+            <ModelSelector direction="up" align="left" />
           </div>
           <button
             disabled={message.trim().length === 0 || loading}

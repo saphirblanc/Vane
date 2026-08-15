@@ -10,9 +10,13 @@ import { AnimatePresence, motion } from 'motion/react';
 
 const ModelSelector = ({
   direction = 'down',
+  align = 'right',
 }: {
   /* 'up' is for the follow-up bar, which is pinned to the bottom of the viewport */
   direction?: 'up' | 'down';
+  /* which edge the panel hangs off - it is wider than its button, so a
+     right-aligned panel on a left-hand button runs off the screen */
+  align?: 'left' | 'right';
 }) => {
   const [providers, setProviders] = useState<MinimalProvider[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -99,7 +103,8 @@ const ModelSelector = ({
             {open && (
               <PopoverPanel
                 className={cn(
-                  'absolute z-10 w-[230px] sm:w-[270px] md:w-[300px] right-0',
+                  'absolute z-10 w-[230px] sm:w-[270px] md:w-[300px]',
+                  align === 'left' ? 'left-0' : 'right-0',
                   openUp && 'bottom-full mb-2',
                 )}
                 static
@@ -110,7 +115,13 @@ const ModelSelector = ({
                   exit={{ opacity: 0, scale: 0.9 }}
                   transition={{ duration: 0.1, ease: 'easeOut' }}
                   className={cn(
-                    openUp ? 'origin-bottom-right' : 'origin-top-right',
+                    openUp
+                      ? align === 'left'
+                        ? 'origin-bottom-left'
+                        : 'origin-bottom-right'
+                      : align === 'left'
+                        ? 'origin-top-left'
+                        : 'origin-top-right',
                     'bg-light-primary dark:bg-dark-primary max-h-[300px] sm:max-w-none border rounded-lg border-light-200 dark:border-dark-200 w-full flex flex-col shadow-lg overflow-hidden',
                   )}
                 >
