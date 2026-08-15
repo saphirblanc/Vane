@@ -4,6 +4,7 @@ import { Message } from '@/components/ChatWindow';
 import { Block } from '@/lib/types';
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -300,7 +301,20 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   const [fileIds, setFileIds] = useState<string[]>([]);
 
   const [sources, setSources] = useState<string[]>(['web']);
-  const [optimizationMode, setOptimizationMode] = useState('speed');
+  const [optimizationMode, setOptimizationModeState] = useState('speed');
+
+  /* Persisted like the chat model, so a reloaded thread keeps the chosen mode
+     instead of silently falling back to speed on the next follow-up. Read in an
+     effect rather than a lazy initialiser to keep SSR hydration consistent. */
+  useEffect(() => {
+    const saved = localStorage.getItem('optimizationMode');
+    if (saved) setOptimizationModeState(saved);
+  }, []);
+
+  const setOptimizationMode = useCallback((mode: string) => {
+    setOptimizationModeState(mode);
+    localStorage.setItem('optimizationMode', mode);
+  }, []);
 
   const [isMessagesLoaded, setIsMessagesLoaded] = useState(false);
 
