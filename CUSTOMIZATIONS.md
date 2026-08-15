@@ -1,6 +1,6 @@
 # Customizations in this fork
 
-Six behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
+Eleven behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
 change (7). They previously lived as
 idempotent string replacements against the minified production build in the
 `itzcrazykns1337/vane:latest` image; they are now source changes, built into a
@@ -24,6 +24,7 @@ nothing.
 | 9 | Search embeddings are fetched in one batch | `baseSearch.ts`, `lib/models/providers/openai/openaiEmbedding.ts` |
 | 10 | The answer stream is rate limited instead of per token | `lib/agents/search/index.ts` |
 | 11 | The classifier model is configurable | `lib/models/classifierModel.ts`, `lib/config/index.ts`, `app/api/chat/route.ts`, `lib/agents/search/index.ts`, `lib/agents/search/types.ts` |
+| 12 | Model and mode are selectable on follow-ups, not just new threads | `components/MessageInput.tsx`, `components/MessageInputActions/Optimization.tsx`, `components/MessageInputActions/ChatModelSelector.tsx`, `lib/hooks/useChat.tsx` |
 
 ## 1. Per-mode answer length
 
@@ -341,6 +342,33 @@ being the modes that never touch Playwright:
 | `search_results` substep | 2.46 MB | 0.08 MB |
 | answer stream (`/data`) | 1.38 MB | 0.13 MB |
 | search + embedding step | 3.65–7.11s | 2.03–3.47s |
+
+## 12. Model and mode are selectable on follow-ups
+
+Upstream puts the model picker and the Speed/Balanced/Quality picker on the
+empty-chat composer only. Once a thread starts, the follow-up bar has just an
+attach button, so both choices are frozen for the rest of the conversation —
+the only escape is customization 5, which reaches them through the retry menu
+of an answer you already paid for.
+
+Both pickers are now mounted in the follow-up bar too, in its single-line and
+multi-line layouts. No plumbing was needed: they already read and write the
+shared chat context, and `sendMessage` reads the same fields, so a change
+applies from the next reply onward. Unlike the retry menu (5), a selection here
+sticks for the rest of the thread rather than applying to one message.
+
+Two placement props exist because the follow-up bar is pinned to the bottom of
+the viewport and sits at the left of a wide row:
+
+- `direction="up"` hangs the panel off `bottom-full`; the default `"down"`
+  keeps upstream's behaviour on the empty-chat composer.
+- `align="left"` on the model panel — it is far wider than its trigger, so
+  upstream's `right-0` runs it off the left edge of the screen.
+
+`optimizationMode` is now persisted to `localStorage` alongside the chat model.
+Without it a reloaded thread displayed whatever mode was picked but sent every
+follow-up as `speed`, because the state reset to its default while the picker
+read from the same state.
 
 ## Merging upstream
 
