@@ -12,10 +12,16 @@ import BaseLLM from './base/llm';
  * Pointing it at a small fast model takes that off the front of every request
  * without touching the model that actually writes the answer.
  *
- * Deliberately forgiving. The setting is free text, so a typo, a model the
- * provider has retired, or a key that belongs to a different provider all have
- * to degrade to the chat model rather than fail the request - the classifier
- * being slow is a nuisance, the search not running at all is not.
+ * The key is looked up in the chat model's own provider first, then in every
+ * other provider that has it configured. Without the second step a chat on a
+ * provider that lacks the key - Hetzner, against an OpenRouter classifier -
+ * silently classified with its own slow chat model instead. The trade-off is
+ * that such a chat's query also reaches the classifier's provider.
+ *
+ * Deliberately forgiving. The setting is free text, so a typo or a model the
+ * provider has retired has to degrade to the chat model rather than fail the
+ * request - the classifier being slow is a nuisance, the search not running at
+ * all is not.
  */
 export const loadClassifierModel = async (
   registry: ModelRegistry,
@@ -28,14 +34,27 @@ export const loadClassifierModel = async (
 
   if (!key) return fallback;
 
-  try {
-    return await registry.loadChatModel(providerId, key);
-  } catch (err) {
-    console.error(
-      `Classifier model "${key}" could not be loaded, falling back to the chat model:`,
-      err,
-    );
+  const candidates = [
+    providerId,
+    ...registry.activeProviders
+      .filter(
+        (p) => p.id !== providerId && p.chatModels?.some((m) => m.key === key),
+      )
+      .map((p) => p.id),
+  ];
 
-    return fallback;
+  for (const candidate of candidates) {
+    try {
+      return await registry.loadChatModel(candidate, key);
+    } catch (err) {
+      if (candidate === candidates[candidates.length - 1]) {
+        console.error(
+          `Classifier model "${key}" could not be loaded, falling back to the chat model:`,
+          err,
+        );
+      }
+    }
   }
+
+  return fallback;
 };

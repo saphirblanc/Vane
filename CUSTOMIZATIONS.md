@@ -1,6 +1,6 @@
 # Customizations in this fork
 
-Thirteen behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
+Fourteen behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
 change (7). They previously lived as
 idempotent string replacements against the minified production build in the
 `itzcrazykns1337/vane:latest` image; they are now source changes, built into a
@@ -27,6 +27,7 @@ nothing.
 | 12 | Model and mode are selectable on follow-ups, not just new threads | `components/MessageInput.tsx`, `components/MessageInputActions/Optimization.tsx`, `components/MessageInputActions/ChatModelSelector.tsx`, `lib/hooks/useChat.tsx` |
 | 13 | Each chat remembers its own model and mode | `lib/db/schema.ts`, `drizzle/0003_chat_model_and_mode.sql`, `app/api/chat/route.ts`, `lib/hooks/useChat.tsx` |
 | 14 | Hetzner inference requests turn Qwen3 thinking off | `lib/models/providers/openai/privacyFetch.ts` |
+| 15 | The classifier model is found in any provider, not just the chat model's | `lib/models/classifierModel.ts` |
 
 ## 1. Per-mode answer length
 
@@ -309,11 +310,11 @@ default, reuses the chat model exactly as before.
 | --- | --- | --- |
 | Classifier model | `search.classifierModel` | `''` (reuse the chat model) |
 
-The key must be one of the models already added to the same provider as the chat
-model — `loadChatModel` validates against the configured list, not against
-everything the provider offers. Resolution is deliberately forgiving: a typo, a
-retired model, or a key from another provider all log and fall back to the chat
-model rather than fail the request. A slow classifier is a nuisance; a search
+The key must be one of the models already added to a provider —
+`loadChatModel` validates against the configured list, not against everything
+the provider offers. It was originally looked up only in the chat model's own
+provider; see 15. Resolution is deliberately forgiving: a typo or a retired
+model logs and falls back to the chat model rather than fail the request. A slow classifier is a nuisance; a search
 that does not run is not.
 
 ```
@@ -433,6 +434,24 @@ holds a small table of per-host body defaults:
 - **Trade-off:** no reasoning pass on Hetzner models. Answers are grounded in
   the retrieved sources anyway, and a model you can't see thinking for four
   minutes is unusable in this UI.
+
+## 15. The classifier model is found in any provider
+
+Customization 11 looked the classifier key up only in the chat model's own
+provider. Once a second provider was added (Hetzner, customization 14), every
+chat on it logged `Classifier model "mistralai/mistral-small-2603" could not be
+loaded` and classified with its own chat model, which is slower. With thinking
+still on, that took 20s before the research block opened.
+
+`loadClassifierModel` now tries the chat model's provider first, then every
+other provider whose configured `chatModels` include the key, in config order.
+Only when none of them loads does it fall back to the chat model. The error is
+logged once, after the last candidate fails.
+
+- **Trade-off:** a chat on provider A with a classifier configured on provider
+  B sends the user's query (and history) to B as well. If a provider is chosen
+  to keep queries away from another one, add a classifier model to that
+  provider too. A key found in the chat's own provider always wins.
 
 ## Merging upstream
 
