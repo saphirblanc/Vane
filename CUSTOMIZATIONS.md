@@ -1,6 +1,6 @@
 # Customizations in this fork
 
-Twelve behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
+Thirteen behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
 change (7). They previously lived as
 idempotent string replacements against the minified production build in the
 `itzcrazykns1337/vane:latest` image; they are now source changes, built into a
@@ -26,6 +26,7 @@ nothing.
 | 11 | The classifier model is configurable | `lib/models/classifierModel.ts`, `lib/config/index.ts`, `app/api/chat/route.ts`, `lib/agents/search/index.ts`, `lib/agents/search/types.ts` |
 | 12 | Model and mode are selectable on follow-ups, not just new threads | `components/MessageInput.tsx`, `components/MessageInputActions/Optimization.tsx`, `components/MessageInputActions/ChatModelSelector.tsx`, `lib/hooks/useChat.tsx` |
 | 13 | Each chat remembers its own model and mode | `lib/db/schema.ts`, `drizzle/0003_chat_model_and_mode.sql`, `app/api/chat/route.ts`, `lib/hooks/useChat.tsx` |
+| 14 | Hetzner inference requests turn Qwen3 thinking off | `lib/models/providers/openai/privacyFetch.ts` |
 
 ## 1. Per-mode answer length
 
@@ -406,6 +407,32 @@ Quality + `xiaomi/mimo-v2.5` and reloading with `localStorage` deliberately
 pointed at `openrouter/auto-beta`/`speed` restored the chat's own pair, left
 `localStorage` untouched, sent the restored pair on an untouched follow-up, and
 still started a brand new thread on `balanced`/`openrouter/auto-beta`.
+
+## 14. Hetzner inference requests turn Qwen3 thinking off
+
+Hetzner's Experiments Platform inference API
+(`https://inference.hetzner.com/api/v1`) serves `Qwen3.8-27B` on vLLM with
+thinking **on** by default. The reasoning streams in `delta.reasoning`, which
+`streamText` does not forward, so the user saw an empty answer box and assumed
+the provider returned nothing.
+
+Measured before the change, a speed-mode search through `/api/chat`: research
+block at 19.9s, sources at 41.3s, text block at 61.3s, **first visible text at
+270.7s**, with the whole answer arriving in one chunk. A direct 300-word prompt
+spent its full 1500-token budget on reasoning and returned no content (66.6s).
+With thinking off the same prompt took 13.0s, with first content at 3.9s.
+
+The fix is a second rule in the fetch wrapper from customization 3, which now
+holds a small table of per-host body defaults:
+
+- **Scope:** only `inference.hetzner.com` URLs ending in `/chat/completions`.
+  `/models`, `/embeddings` and every other host are untouched.
+- **What:** `chat_template_kwargs: { enable_thinking: false }`.
+- **Precedence:** a default, not an override. An existing
+  `chat_template_kwargs` in the body is spread over it.
+- **Trade-off:** no reasoning pass on Hetzner models. Answers are grounded in
+  the retrieved sources anyway, and a model you can't see thinking for four
+  minutes is unusable in this UI.
 
 ## Merging upstream
 
