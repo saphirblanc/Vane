@@ -43,8 +43,14 @@ class SessionManager {
   }
 
   emit(event: string, data: any) {
-    this.emitter.emit(event, data);
+    /* Recorded before dispatch, and an 'error' with no live subscriber is not
+     * dispatched at all: EventEmitter throws on an unhandled 'error', which
+     * would drop the event before a reconnecting client could replay it. */
     this.events.push({ event, data });
+
+    if (event === 'error' && this.emitter.listenerCount('error') === 0) return;
+
+    this.emitter.emit(event, data);
   }
 
   emitBlock(block: Block) {

@@ -24,6 +24,67 @@ const withoutEmbeddings = (chunks: Chunk[]): Chunk[] =>
     metadata: { ...chunk.metadata, embedding: [] },
   }));
 
+/**
+ * One SearXNG query that cannot take the whole search down with it.
+ *
+ * `searchSearxng` throws on a non-2xx and after its 10s abort, and the queries
+ * run under a bare `Promise.all`, so one slow query used to reject the entire
+ * research step. Nothing above caught it: the chat stream stopped right after
+ * the research block and never ended, and the message stayed `answering`
+ * forever (seen 2026-09-15 and 2026-09-18). The timeouts are intermittent,
+ * so a failed query now counts as zero results and the others, plus the
+ * researcher's later iterations, carry the answer.
+ *
+ * Only when every query of a call failed and the turn has found nothing yet
+ * does it throw. Zero results there do not mean "nothing on the web": the
+ * writer, handed an empty context, answered from training data instead
+ * (measured: it described the Apollo AIR-1 air sensor as a vaporizer). An
+ * explicit error that says to retry is the honest outcome.
+ */
+const searchAllSoft = async (
+  queries: string[],
+  opts: SearxngSearchOptions | undefined,
+  researchBlock: ResearchBlock,
+  onResult: (
+    q: string,
+    res: Awaited<ReturnType<typeof searchSearxng>>,
+  ) => Promise<void>,
+) => {
+  const errors: string[] = [];
+
+  await Promise.all(
+    queries.map(async (q) => {
+      let res: Awaited<ReturnType<typeof searchSearxng>>;
+
+      try {
+        res = await searchSearxng(q, opts);
+      } catch (err: any) {
+        const message = err?.message ?? String(err);
+        console.warn(
+          `Search for "${q}" failed, continuing without it:`,
+          message,
+        );
+        errors.push(message);
+        return;
+      }
+
+      await onResult(q, res);
+    }),
+  );
+
+  const foundEarlier = researchBlock.data.subSteps.some(
+    (step) =>
+      (step.type === 'search_results' || step.type === 'reading') &&
+      step.reading.length > 0,
+  );
+
+  if (queries.length > 0 && errors.length === queries.length && !foundEarlier) {
+    throw new Error(
+      `the search engine did not answer any of ${queries.length} searches (${errors[0]})`,
+    );
+  }
+};
+
 export const executeSearch = async (input: {
   queries: string[];
   mode: SearchAgentConfig['mode'];
@@ -55,11 +116,10 @@ export const executeSearch = async (input: {
 
     const results: Chunk[] = [];
 
-    const search = async (q: string) => {
-      const res = await searchSearxng(q, {
-        ...(input.searchConfig ? input.searchConfig : {}),
-      });
-
+    const search = async (
+      q: string,
+      res: Awaited<ReturnType<typeof searchSearxng>>,
+    ) => {
       let resultChunks: Chunk[] = [];
 
       try {
@@ -139,7 +199,12 @@ export const executeSearch = async (input: {
       }
     };
 
-    await Promise.all(input.queries.map(search));
+    await searchAllSoft(
+      input.queries,
+      input.searchConfig,
+      researchBlock,
+      search,
+    );
 
     results.sort((a, b) => b.metadata.similarity - a.metadata.similarity);
 
@@ -189,11 +254,10 @@ export const executeSearch = async (input: {
 
     const searchResults: Chunk[] = [];
 
-    const search = async (q: string) => {
-      const res = await searchSearxng(q, {
-        ...(input.searchConfig ? input.searchConfig : {}),
-      });
-
+    const search = async (
+      q: string,
+      res: Awaited<ReturnType<typeof searchSearxng>>,
+    ) => {
       let resultChunks: Chunk[] = [];
 
       resultChunks = res.results.map((r) => {
@@ -249,7 +313,12 @@ export const executeSearch = async (input: {
       }
     };
 
-    await Promise.all(input.queries.map(search));
+    await searchAllSoft(
+      input.queries,
+      input.searchConfig,
+      researchBlock,
+      search,
+    );
 
     const pickerPrompt = `
       Assistant is an AI search result picker. Assistant's task is to pick 2-3 of the most relevant search results based off the query which can be then scraped for information to answer the query.

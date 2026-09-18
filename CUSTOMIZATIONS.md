@@ -453,6 +453,36 @@ logged once, after the last candidate fails.
   to keep queries away from another one, add a classifier model to that
   provider too. A key found in the chat's own provider always wins.
 
+## 16. A slow SearXNG no longer hangs the answer forever
+
+`searchSearxng` aborts after 10s and throws. The search queries ran under a
+bare `Promise.all`, and the chat route fires `searchAsync` without awaiting
+it, so one slow query surfaced only as `unhandledRejection` in the log. The
+stream stopped after the research block and never ended, and the message row
+stayed `answering` for good (2026-09-15, and a chat on 2026-09-18). SearXNG can
+legitimately take more than 10s: DuckDuckGo CAPTCHAs plus the
+`engine_fallback` plugin running its backup engine sequentially.
+
+- `baseSearch.ts`: a failed query is logged and counts as zero results; the
+  other queries and later researcher iterations carry the answer. Only when
+  **every** query of a call fails and the turn has found nothing yet does it
+  throw. With an empty context the writer answered from training data (it
+  called the Apollo AIR-1 air sensor a vaporizer), so an explicit error is the
+  honest outcome.
+- `SearchAgent.searchAsync` wraps the turn. Any throw emits an `error` event
+  (the client shows a toast) and saves the row as `error` with the blocks
+  streamed so far, so a reload does not try to reconnect to a dead session.
+  `/api/search` gets the same `.catch`.
+- `SessionManager.emit` records an event before dispatching it, and skips
+  dispatching an `error` that has no subscriber. EventEmitter throws on an
+  unhandled `error`, which would have dropped it before a reconnect could
+  replay it.
+
+Measured with a proxy that stalls SearXNG for 15s: half the searches stalled
+took 45-108s with 12-47 sources (the same fault used to hang forever). All of
+them stalled gave an error toast at 13.7s and an `error` row. Healthy runs are
+unchanged (45s, 13 sources).
+
 ## Merging upstream
 
 ```sh

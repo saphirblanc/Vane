@@ -17,10 +17,7 @@ class SearchAgent {
    * Skipped entirely for an ephemeral turn - see `SearchAgentInput.ephemeral`.
    * The answer still streams to the client; it just leaves nothing behind.
    */
-  private async beginMessage(
-    session: SessionManager,
-    input: SearchAgentInput,
-  ) {
+  private async beginMessage(session: SessionManager, input: SearchAgentInput) {
     const exists = await db.query.messages.findFirst({
       where: and(
         eq(messages.chatId, input.chatId),
@@ -62,7 +59,48 @@ class SearchAgent {
     }
   }
 
+  /**
+   * Runs one turn and guarantees the stream ends, whatever throws.
+   *
+   * The chat route fires this without awaiting it, so an exception anywhere
+   * in the turn used to surface only as an `unhandledRejection` in the log.
+   * No 'end' or 'error' was ever emitted: the client spun until its own
+   * timeout and the message row stayed `answering`, which also made every
+   * later page load try to reconnect to it. Now the client gets an error
+   * toast and the row is closed as `error`, keeping whatever blocks streamed.
+   */
   async searchAsync(session: SessionManager, input: SearchAgentInput) {
+    try {
+      await this.runTurn(session, input);
+    } catch (err: any) {
+      console.error('Search turn failed:', err);
+
+      session.emit('error', {
+        data: `Answer failed: ${err?.message ?? 'unknown error'}. Please retry.`,
+      });
+
+      if (input.ephemeral) return;
+
+      await db
+        .update(messages)
+        .set({
+          status: 'error',
+          responseBlocks: session.getAllBlocks(),
+        })
+        .where(
+          and(
+            eq(messages.chatId, input.chatId),
+            eq(messages.messageId, input.messageId),
+          ),
+        )
+        .execute()
+        .catch((dbErr) =>
+          console.error('Failed to mark message as errored:', dbErr),
+        );
+    }
+  }
+
+  private async runTurn(session: SessionManager, input: SearchAgentInput) {
     if (!input.ephemeral) {
       await this.beginMessage(session, input);
     }
