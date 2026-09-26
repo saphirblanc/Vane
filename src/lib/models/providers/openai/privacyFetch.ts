@@ -27,13 +27,19 @@ const RULES: BodyRule[] = [
    * The trade-off is real: a model with no compliant endpoint returns
    * `404 No allowed providers are available` instead of silently falling back
    * to a data-collecting provider. That is the intended behaviour, but it is
-   * the failure mode to expect when adding models. */
+   * the failure mode to expect when adding models.
+   *
+   * Among the compliant endpoints, the fastest (by OpenRouter's measured
+   * throughput) is tried first rather than OpenRouter's default price-weighted
+   * load balancing - generation is ~93% of a query's wall time. Fallback to
+   * the next endpoint on error still applies. */
   {
     host: 'openrouter.ai',
     paths: ['/chat/completions', '/embeddings'],
     apply: (body) => {
       body.provider = {
         data_collection: 'deny',
+        sort: 'throughput',
         ...(body.provider ?? {}),
       };
     },

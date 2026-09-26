@@ -1,6 +1,6 @@
 # Customizations in this fork
 
-Fourteen behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
+Sixteen behaviour changes against upstream `ItzCrazyKns/Vane`, plus one build
 change (7). They previously lived as
 idempotent string replacements against the minified production build in the
 `itzcrazykns1337/vane:latest` image; they are now source changes, built into a
@@ -28,6 +28,8 @@ nothing.
 | 13 | Each chat remembers its own model and mode | `lib/db/schema.ts`, `drizzle/0003_chat_model_and_mode.sql`, `app/api/chat/route.ts`, `lib/hooks/useChat.tsx` |
 | 14 | Hetzner inference requests turn Qwen3 thinking off | `lib/models/providers/openai/privacyFetch.ts` |
 | 15 | The classifier model is found in any provider, not just the chat model's | `lib/models/classifierModel.ts` |
+| 16 | A slow SearXNG no longer hangs the answer forever | `lib/agents/search/researcher/actions/search/baseSearch.ts` |
+| 17 | OpenRouter routes to the fastest compliant provider first | `lib/models/providers/openai/privacyFetch.ts` |
 
 ## 1. Per-mode answer length
 
@@ -482,6 +484,24 @@ Measured with a proxy that stalls SearXNG for 15s: half the searches stalled
 took 45-108s with 12-47 sources (the same fault used to hang forever). All of
 them stalled gave an error toast at 13.7s and an `error` row. Healthy runs are
 unchanged (45s, 13 sources).
+
+## 17. OpenRouter routes to the fastest compliant provider first
+
+By default OpenRouter load-balances a model's endpoints weighted by price, so
+a query can land on a slow, cheap upstream. Generation is ~93% of a query's
+wall time here, so the OpenRouter rule from customization 3 now also sets
+`provider.sort: 'throughput'`: endpoints are tried in order of OpenRouter's
+measured tokens/s, fastest first.
+
+- **Scope:** same as customization 3 - OpenRouter `/chat/completions` and
+  `/embeddings`.
+- **Filtering still applies:** `data_collection: 'deny'` narrows the endpoint
+  set first; sorting only orders what remains. Fallback to the next endpoint
+  on error is unchanged.
+- **Precedence:** a default. A request that sets its own `provider.sort` wins.
+- **Trade-off:** no price weighting, so a faster endpoint may cost more per
+  token. Throughput is also OpenRouter's recent average, not a guarantee for
+  the individual request.
 
 ## Merging upstream
 
